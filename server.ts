@@ -18,6 +18,7 @@ import { createServer as createViteServer } from 'vite';
 // 與 Vercel serverless 共用同一份邏輯（內聯於 api/ 檔案，避免跨目錄 import 造成 Vercel 打包失敗）
 import { fetchStockPrice } from './api/stock-price';
 import { analyzeScreenshot } from './api/analyze-screenshot';
+import transactionsHandler from './api/transactions';
 
 const app = express();
 const PORT = Number(process.env.PORT) || 5174;
@@ -64,6 +65,9 @@ app.post('/api/analyze-screenshot', async (req, res) => {
     return res.status(500).json({ error: msg, details: String(error) });
   }
 });
+
+// API: Google Sheet 交易資料庫（CRUD）— 直接複用 Vercel handler（Express res 相容）
+app.all('/api/transactions', (req, res) => transactionsHandler(req as any, res as any));
 
 async function startServer() {
   // Vite 整合配置 (本地開發)

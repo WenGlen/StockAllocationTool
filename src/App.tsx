@@ -143,22 +143,32 @@ export default function App() {
   const [priceUpdateStatus, setPriceUpdateStatus] = useState('');
   const didAutoRefreshPrices = useRef(false);
 
-  // 1. Load initial state
+  // 1. Load initial state from Google Sheet（失敗則退回本地快取）
   useEffect(() => {
-    const cached = localStorage.getItem(LOCAL_STORAGE_KEY);
-    if (cached) {
+    (async () => {
       try {
-        const parsed = JSON.parse(cached);
-        if (parsed.transactions) setTransactions(parsed.transactions);
-        if (parsed.settings) setSettings(parsed.settings);
-        if (parsed.stockAliases) setStockAliases(parsed.stockAliases);
+        const res = await fetch('/api/transactions');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const db = await res.json();
+        setTransactions(db.transactions || []);
+        if (db.settings) setSettings(db.settings);
+        if (db.stockAliases && db.stockAliases.length) setStockAliases(db.stockAliases);
+        saveState(db.transactions || [], db.settings || INITIAL_SETTINGS, db.stockAliases || INITIAL_ALIASES);
       } catch (e) {
-        console.error('Failed to parse cached database, using defaults', e);
-        resetToDemoData();
+        console.warn('雲端載入失敗，改用本地快取', e);
+        const cached = localStorage.getItem(LOCAL_STORAGE_KEY);
+        if (cached) {
+          try {
+            const parsed = JSON.parse(cached);
+            if (parsed.transactions) setTransactions(parsed.transactions);
+            if (parsed.settings) setSettings(parsed.settings);
+            if (parsed.stockAliases) setStockAliases(parsed.stockAliases);
+          } catch {
+            /* 快取毀損則維持空狀態 */
+          }
+        }
       }
-    } else {
-      resetToDemoData();
-    }
+    })();
   }, []);
 
   // 2. Persist state to local storage when database changes
@@ -263,8 +273,28 @@ export default function App() {
     handleRefreshPrices();
   }, [transactions]);
 
-  // 5. Database mutators
-  const handleAddTransaction = (newTx: Omit<Transaction, 'id' | 'createdAt'>) => {
+  // 從 Google Sheet 重新載入全部（寫入失敗時用來把畫面同步回真實狀態）
+  const resyncFromServer = async () => {
+    try {
+      const res = await fetch('/api/transactions');
+      if (!res.ok) return;
+      const db = await res.json();
+      setTransactions(db.transactions || []);
+      if (db.settings) setSettings(db.settings);
+      if (db.stockAliases && db.stockAliases.length) setStockAliases(db.stockAliases);
+      saveState(db.transactions || [], db.settings || settings, db.stockAliases || stockAliases);
+    } catch (e) {
+      console.warn('重新同步失敗', e);
+    }
+  };
+
+  const notifySaveError = (e: unknown) => {
+    const msg = e instanceof Error ? e.message : String(e);
+    alert(`儲存到雲端資料庫失敗：${msg}\n畫面將重新從雲端同步。`);
+  };
+
+  // 5. Database mutators — 樂觀更新本地 state，同步寫入 Google Sheet；失敗則重新同步
+  const handleAddTransaction = async (newTx: Omit<Transaction, 'id' | 'createdAt'>) => {
     const fullTx: Transaction = {
       ...newTx,
       id: 'tx_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now(),
@@ -273,9 +303,23 @@ export default function App() {
     const nextTxs = [...transactions, fullTx];
     setTransactions(nextTxs);
     saveState(nextTxs, settings, stockAliases);
+    try {
+      const res = await fetch('/api/transactions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(fullTx),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({} as any));
+        throw new Error(err.error || `HTTP ${res.status}`);
+      }
+    } catch (e) {
+      notifySaveError(e);
+      resyncFromServer();
+    }
   };
 
-  const handleBatchAddTransactions = (newTxs: Omit<Transaction, 'id' | 'createdAt'>[]) => {
+  const handleBatchAddTransactions = async (newTxs: Omit<Transaction, 'id' | 'createdAt'>[]) => {
     const fullTxs: Transaction[] = newTxs.map((tx, idx) => ({
       ...tx,
       id: 'tx_' + Math.random().toString(36).substr(2, 9) + '_' + (Date.now() + idx),
@@ -284,32 +328,59 @@ export default function App() {
     const nextTxs = [...transactions, ...fullTxs];
     setTransactions(nextTxs);
     saveState(nextTxs, settings, stockAliases);
+    try {
+      const res = await fetch('/api/transactions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transactions: fullTxs }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({} as any));
+        throw new Error(err.error || `HTTP ${res.status}`);
+      }
+    } catch (e) {
+      notifySaveError(e);
+      resyncFromServer();
+    }
   };
 
-  const handleUpdateTransaction = (id: string, updatedFields: Partial<Transaction>) => {
-    const nextTxs = transactions.map(t => t.id === id ? { ...t, ...updatedFields } : t);
+  const handleUpdateTransaction = async (id: string, updatedFields: Partial<Transaction>) => {
+    const existing = transactions.find(t => t.id === id);
+    if (!existing) return;
+    const merged = { ...existing, ...updatedFields };
+    const nextTxs = transactions.map(t => t.id === id ? merged : t);
     setTransactions(nextTxs);
     saveState(nextTxs, settings, stockAliases);
+    try {
+      const res = await fetch('/api/transactions', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(merged),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({} as any));
+        throw new Error(err.error || `HTTP ${res.status}`);
+      }
+    } catch (e) {
+      notifySaveError(e);
+      resyncFromServer();
+    }
   };
 
-  const handleDeleteTransaction = (id: string) => {
+  const handleDeleteTransaction = async (id: string) => {
     const nextTxs = transactions.filter(t => t.id !== id);
     setTransactions(nextTxs);
     saveState(nextTxs, settings, stockAliases);
-  };
-
-  const handleImportDBState = (imported: { transactions?: Transaction[]; settings?: Settings; stockAliases?: StockAlias[] }) => {
-    const nextTxs = imported.transactions !== undefined ? imported.transactions : transactions;
-    const nextSetts = imported.settings !== undefined ? imported.settings : settings;
-    const nextAliases = imported.stockAliases !== undefined ? imported.stockAliases : stockAliases;
-
-    setTransactions(nextTxs);
-    setSettings(nextSetts);
-    setStockAliases(nextAliases);
-    saveState(nextTxs, nextSetts, nextAliases);
-    
-    // Clear price overlay to force recalculation based on new cost basis
-    setMarketPrices({});
+    try {
+      const res = await fetch(`/api/transactions?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({} as any));
+        throw new Error(err.error || `HTTP ${res.status}`);
+      }
+    } catch (e) {
+      notifySaveError(e);
+      resyncFromServer();
+    }
   };
 
   return (
