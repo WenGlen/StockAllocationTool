@@ -15,8 +15,9 @@ dotenv.config();
 import express from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
-import { fetchStockPrice } from './lib/stock-price';
-import { analyzeScreenshot } from './lib/analyze-screenshot';
+// 與 Vercel serverless 共用同一份邏輯（內聯於 api/ 檔案，避免跨目錄 import 造成 Vercel 打包失敗）
+import { fetchStockPrice } from './api/stock-price';
+import { analyzeScreenshot } from './api/analyze-screenshot';
 
 const app = express();
 const PORT = Number(process.env.PORT) || 5174;

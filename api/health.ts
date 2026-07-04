@@ -5,7 +5,7 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
-/** GET /api/health — 健康檢查 */
+/** GET /api/health — 健康檢查（version 供部署確認用） */
 export default function handler(_req: VercelRequest, res: VercelResponse) {
-  res.json({ status: 'ok', time: new Date().toISOString() });
+  res.json({ status: 'ok', version: 'phase0-selfcontained', time: new Date().toISOString() });
 }
