@@ -27,32 +27,37 @@ const getGeminiClient = () => {
   });
 };
 
-/** 依序嘗試多個模型 + 重試，全部失敗才丟錯 */
-async function generateContentWithFallback(ai: any, contents: any, config: any) {
-  const modelsToTry = ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-1.5-flash'];
-  let lastError: any = null;
+/**
+ * 呼叫 Gemini（單一快速模型 + 逾時保護）。
+ * 為配合 Vercel Hobby 的 10 秒 serverless 上限而簡化：不做多模型／多次重試的長迴圈，
+ * 並在 8.5 秒切斷，讓逾時回傳可讀錯誤，而非整個 function 崩潰（FUNCTION_INVOCATION_FAILED）。
+ */
+async function callGemini(ai: any, contents: any, config: any) {
+  const MODEL = 'gemini-2.5-flash';
+  const TIMEOUT_MS = 8500;
+  console.log(`[Gemini] Analyzing with ${MODEL} (timeout ${TIMEOUT_MS}ms)...`);
 
-  for (const modelName of modelsToTry) {
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      try {
-        console.log(`[Gemini] Attempting analysis using model: ${modelName} (attempt ${attempt}/2)...`);
-        const response = await ai.models.generateContent({ model: modelName, contents, config });
-        if (response && response.text) {
-          console.log(`[Gemini] Analysis succeeded with model: ${modelName}`);
-          return response;
-        }
-      } catch (err: any) {
-        lastError = err;
-        console.warn(`[Gemini] Model ${modelName} (attempt ${attempt}/2) failed:`, err.message || err);
-        if (attempt < 2) {
-          console.log('[Gemini] Waiting 1000ms before retrying same model...');
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-        }
-      }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error('AI 判讀逾時（超過伺服器時間上限），請讓截圖範圍小一點或稍後再試')),
+      TIMEOUT_MS,
+    );
+  });
+
+  try {
+    const response: any = await Promise.race([
+      ai.models.generateContent({ model: MODEL, contents, config }),
+      timeout,
+    ]);
+    if (!response || !response.text) {
+      throw new Error('Empty response from Gemini AI');
     }
-    console.log(`[Gemini] Switching to fallback model from ${modelName}...`);
+    console.log(`[Gemini] Analysis succeeded with model: ${MODEL}`);
+    return response;
+  } finally {
+    if (timer) clearTimeout(timer);
   }
-  throw lastError || new Error('All models failed to respond');
 }
 
 const PROMPT_TEXT = `
@@ -149,8 +154,7 @@ export async function analyzeScreenshot(imageDataUrl: string): Promise<any> {
 
   const imagePart = { inlineData: { data: base64Data, mimeType } };
 
-  console.log('[Gemini] Analyzing screenshot with fallback and retry mechanisms...');
-  const response = await generateContentWithFallback(ai, [imagePart, PROMPT_TEXT], {
+  const response = await callGemini(ai, [imagePart, PROMPT_TEXT], {
     responseMimeType: 'application/json',
     responseSchema: RESPONSE_SCHEMA,
   });
