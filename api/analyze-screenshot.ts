@@ -98,21 +98,59 @@ function buildResponseSchema() {
   };
 }
 
-/** 呼叫 Gemini：單一快速模型 + 8.5 秒逾時（配合 Vercel 10 秒上限，逾時給可讀錯誤） */
-async function callGemini(ai: any, contents: any, config: any) {
-  const MODEL = 'gemini-2.5-flash';
-  const TIMEOUT_MS = 8500;
+/** 對 promise 加上逾時保護（逾時 reject，並清除計時器） */
+function withTimeout<T>(p: Promise<T>, ms: number, msg: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error('AI 判讀逾時（超過伺服器時間上限），請讓截圖範圍小一點或稍後再試')), TIMEOUT_MS);
+  const to = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(msg)), ms);
   });
-  try {
-    const response: any = await Promise.race([ai.models.generateContent({ model: MODEL, contents, config }), timeout]);
-    if (!response || !response.text) throw new Error('Empty response from Gemini AI');
-    return response;
-  } finally {
+  return Promise.race([p, to]).finally(() => {
     if (timer) clearTimeout(timer);
+  }) as Promise<T>;
+}
+
+/** 判斷是否為「暫時性」錯誤（過載／限流），值得重試或換模型 */
+function isTransient(err: any): boolean {
+  const s = String(err?.message || err);
+  return /\b(50[234]|429)\b|unavailable|overloaded|high demand|rate.?limit|quota|try again/i.test(s);
+}
+
+/**
+ * 呼叫 Gemini：主模型 + 備援模型，遇暫時性錯誤（如 503 過載）快速重試。
+ * 用整體 9 秒預算 + 逐次逾時，確保永遠在 Vercel 10 秒 serverless 上限內回應。
+ */
+async function callGemini(ai: any, contents: any, config: any) {
+  const MODELS = ['gemini-2.5-flash', 'gemini-2.0-flash'];
+  const deadline = Date.now() + 9000;
+  let lastErr: any = null;
+
+  for (const model of MODELS) {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const remaining = deadline - Date.now();
+      if (remaining < 2000) {
+        // 時間不夠再試一次了
+        throw lastErr || new Error('AI 服務目前忙碌中，請稍後再試');
+      }
+      try {
+        console.log(`[Gemini] ${model} attempt ${attempt} (budget ${remaining}ms)...`);
+        const response: any = await withTimeout(
+          ai.models.generateContent({ model, contents, config }),
+          Math.min(remaining - 200, 8000),
+          'AI 判讀逾時，請稍後再試',
+        );
+        if (!response || !response.text) throw new Error('Empty response from Gemini AI');
+        console.log(`[Gemini] Success with ${model}`);
+        return response;
+      } catch (err: any) {
+        lastErr = err;
+        console.warn(`[Gemini] ${model} attempt ${attempt} failed:`, err?.message || err);
+        if (/逾時/.test(String(err?.message))) throw err; // 逾時代表時間已耗盡，直接停
+        if (!isTransient(err)) break; // 非暫時性錯誤 → 換下一個模型
+        await new Promise((r) => setTimeout(r, 400)); // 暫時性 → 稍等再試
+      }
+    }
   }
+  throw lastErr || new Error('AI 服務目前忙碌中，請稍後再試');
 }
 
 /** 解析一張對帳／網銀截圖，回傳結構化交易 JSON。 */
