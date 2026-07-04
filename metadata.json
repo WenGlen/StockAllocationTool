@@ -1,0 +1,6 @@
+{
+  "name": "股票分帳工具",
+  "description": "Yun與哥哥共用帳戶的台股分帳與記帳系統，支援截圖 AI 辨識、自動收盤價報價與資料匯出",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
