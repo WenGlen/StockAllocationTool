@@ -17,8 +17,9 @@ import path from 'path';
 import { createServer as createViteServer } from 'vite';
 // 與 Vercel serverless 共用同一份邏輯（內聯於 api/ 檔案，避免跨目錄 import 造成 Vercel 打包失敗）
 import { fetchStockPrice } from './api/stock-price';
-import { analyzeScreenshot } from './api/analyze-screenshot';
+import analyzeScreenshotHandler from './api/analyze-screenshot';
 import transactionsHandler from './api/transactions';
+import authHandler from './api/auth';
 
 const app = express();
 const PORT = Number(process.env.PORT) || 5174;
@@ -50,21 +51,11 @@ app.get('/api/stock-price', async (req, res) => {
   }
 });
 
-// API: AI 視覺解析對帳單與網銀截圖
-app.post('/api/analyze-screenshot', async (req, res) => {
-  const { image } = req.body;
-  if (!image) {
-    return res.status(400).json({ error: 'Missing image data in request body' });
-  }
-  try {
-    const result = await analyzeScreenshot(image);
-    return res.json(result);
-  } catch (error) {
-    console.error('[Screenshot Analysis Error] API Call failed:', error);
-    const msg = error instanceof Error ? error.message : 'AI Screenshot analysis failed';
-    return res.status(500).json({ error: msg, details: String(error) });
-  }
-});
+// API: AI 視覺解析（複用 Vercel handler，含登入保護）
+app.all('/api/analyze-screenshot', (req, res) => analyzeScreenshotHandler(req as any, res as any));
+
+// API: Google 登入
+app.all('/api/auth', (req, res) => authHandler(req as any, res as any));
 
 // API: Google Sheet 交易資料庫（CRUD）— 直接複用 Vercel handler（Express res 相容）
 app.all('/api/transactions', (req, res) => transactionsHandler(req as any, res as any));

@@ -5,6 +5,31 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleGenAI, Type } from '@google/genai';
+import crypto from 'node:crypto';
+
+/** 驗證登入 cookie（與 api/auth.ts 同演算法；自包含）。回 email 或 null。 */
+function getSessionEmail(req: VercelRequest): string | null {
+  const secret = process.env.AUTH_SECRET || '';
+  if (!secret) return null;
+  const raw = (req.headers.cookie || '').split(';').map((s) => s.trim()).find((s) => s.startsWith('sat_session='));
+  if (!raw) return null;
+  const token = decodeURIComponent(raw.slice('sat_session='.length));
+  const [p, sig] = token.split('.');
+  if (!p || !sig) return null;
+  const expected = crypto.createHmac('sha256', secret).update(p).digest('base64url');
+  const a = Buffer.from(sig);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(p, 'base64url').toString());
+    if (!payload.exp || payload.exp < Math.floor(Date.now() / 1000)) return null;
+    const allowed = (process.env.ALLOWED_EMAILS || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+    if (!allowed.includes(String(payload.email).toLowerCase())) return null;
+    return String(payload.email);
+  } catch {
+    return null;
+  }
+}
 
 /**
  * AI 視覺解析對帳單／網銀截圖（Gemini）。
@@ -178,6 +203,9 @@ export async function analyzeScreenshot(imageDataUrl: string): Promise<any> {
 
 /** POST /api/analyze-screenshot { image } */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  if (!getSessionEmail(req)) {
+    return res.status(401).json({ error: '請先登入' });
+  }
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }

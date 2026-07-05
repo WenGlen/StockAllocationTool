@@ -14,13 +14,15 @@ import {
   Sparkles,
   BookOpen,
   Database,
-  ArrowRightLeft
+  ArrowRightLeft,
+  LogOut
 } from 'lucide-react';
 import { Transaction, Settings, StockAlias, LedgerState } from './types';
 import { recalculateLedger } from './utils/ledger';
 import DashboardTab from './components/DashboardTab';
 import UploadTab from './components/UploadTab';
 import LedgerTab from './components/LedgerTab';
+import LoginScreen from './components/LoginScreen';
 
 const LOCAL_STORAGE_KEY = 'STOCK_SPLIT_LEDGER_DB';
 
@@ -143,33 +145,72 @@ export default function App() {
   const [priceUpdateStatus, setPriceUpdateStatus] = useState('');
   const didAutoRefreshPrices = useRef(false);
 
-  // 1. Load initial state from Google Sheet（失敗則退回本地快取）
-  useEffect(() => {
-    (async () => {
-      try {
-        const res = await fetch('/api/transactions');
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const db = await res.json();
-        setTransactions(db.transactions || []);
-        if (db.settings) setSettings(db.settings);
-        if (db.stockAliases && db.stockAliases.length) setStockAliases(db.stockAliases);
-        saveState(db.transactions || [], db.settings || INITIAL_SETTINGS, db.stockAliases || INITIAL_ALIASES);
-      } catch (e) {
-        console.warn('雲端載入失敗，改用本地快取', e);
-        const cached = localStorage.getItem(LOCAL_STORAGE_KEY);
-        if (cached) {
-          try {
-            const parsed = JSON.parse(cached);
-            if (parsed.transactions) setTransactions(parsed.transactions);
-            if (parsed.settings) setSettings(parsed.settings);
-            if (parsed.stockAliases) setStockAliases(parsed.stockAliases);
-          } catch {
-            /* 快取毀損則維持空狀態 */
-          }
+  // Auth state
+  const [authState, setAuthState] = useState<'checking' | 'authed' | 'guest'>('checking');
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [googleClientId, setGoogleClientId] = useState<string>('');
+
+  // 從 Google Sheet 載入資料（失敗退回本地快取；401 代表登入過期）
+  const loadData = async () => {
+    try {
+      const res = await fetch('/api/transactions');
+      if (res.status === 401) { setAuthState('guest'); return; }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const db = await res.json();
+      setTransactions(db.transactions || []);
+      if (db.settings) setSettings(db.settings);
+      if (db.stockAliases && db.stockAliases.length) setStockAliases(db.stockAliases);
+      saveState(db.transactions || [], db.settings || INITIAL_SETTINGS, db.stockAliases || INITIAL_ALIASES);
+    } catch (e) {
+      console.warn('雲端載入失敗，改用本地快取', e);
+      const cached = localStorage.getItem(LOCAL_STORAGE_KEY);
+      if (cached) {
+        try {
+          const parsed = JSON.parse(cached);
+          if (parsed.transactions) setTransactions(parsed.transactions);
+          if (parsed.settings) setSettings(parsed.settings);
+          if (parsed.stockAliases) setStockAliases(parsed.stockAliases);
+        } catch {
+          /* 快取毀損則維持空狀態 */
         }
       }
-    })();
+    }
+  };
+
+  // 1. 檢查登入狀態；已登入才載入資料
+  const checkAuthAndLoad = async () => {
+    try {
+      const res = await fetch('/api/auth');
+      const data = await res.json();
+      if (data.authenticated) {
+        setUserEmail(data.email);
+        setAuthState('authed');
+        loadData();
+      } else {
+        setGoogleClientId(data.clientId || '');
+        setAuthState('guest');
+      }
+    } catch {
+      setAuthState('guest');
+    }
+  };
+
+  useEffect(() => {
+    checkAuthAndLoad();
   }, []);
+
+  const handleLogout = async () => {
+    try {
+      await fetch('/api/auth?action=logout', { method: 'POST' });
+    } catch {
+      /* 忽略登出網路錯誤 */
+    }
+    setUserEmail(null);
+    setAuthState('guest');
+    setTransactions([]);
+    setMarketPrices({});
+    didAutoRefreshPrices.current = false;
+  };
 
   // 2. Persist state to local storage when database changes
   const saveState = (txs: Transaction[], setts: Settings, aliases: StockAlias[]) => {
@@ -383,6 +424,18 @@ export default function App() {
     }
   };
 
+  // 登入前：檢查中 / 顯示登入頁
+  if (authState === 'checking') {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="text-gray-400 text-sm font-bold">載入中…</div>
+      </div>
+    );
+  }
+  if (authState === 'guest') {
+    return <LoginScreen clientId={googleClientId} onSuccess={checkAuthAndLoad} />;
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 pb-16 font-sans">
       {/* Sticky Header + Navigation (single fixed bar) */}
@@ -418,6 +471,14 @@ export default function App() {
             >
               <FileText className="w-4 h-4" />
               <span>歷史紀錄</span>
+            </button>
+            <button
+              onClick={handleLogout}
+              title={userEmail || ''}
+              className="py-2 px-3 sm:px-4 text-sm sm:text-base font-extrabold rounded-lg flex items-center space-x-1.5 text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
+            >
+              <LogOut className="w-4 h-4" />
+              <span className="hidden sm:inline">登出</span>
             </button>
           </nav>
         </div>
