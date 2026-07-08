@@ -18,11 +18,12 @@ import {
   ListPlus
 } from 'lucide-react';
 import { Transaction, Settings, TransactionType } from '../types';
+import NumberField from './NumberField';
 
 interface UploadTabProps {
   settings: Settings;
-  onAddTransaction: (tx: Omit<Transaction, 'id' | 'createdAt'>) => void;
-  onBatchAddTransactions: (txs: Omit<Transaction, 'id' | 'createdAt'>[]) => void;
+  onAddTransaction: (tx: Omit<Transaction, 'id' | 'createdAt'>) => void | Promise<void>;
+  onBatchAddTransactions: (txs: Omit<Transaction, 'id' | 'createdAt'>[]) => void | Promise<void>;
 }
 
 interface DetectedTransaction {
@@ -80,6 +81,7 @@ export default function UploadTab({
   const [dragActive, setDragActive] = useState(false);
   const [imageSrc, setImageSrc] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
@@ -270,11 +272,13 @@ export default function UploadTab({
     setYunRatio(100 - val);
   };
 
-  const handleSingleSubmit = (e: React.FormEvent) => {
+  const handleSingleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+    if (submitting) return;
+    setSubmitting(true);
+    try {
     // Create new transaction
-    onAddTransaction({
+    await onAddTransaction({
       date,
       type: txType,
       symbol: symbol.trim() || undefined,
@@ -300,10 +304,15 @@ export default function UploadTab({
     setSuccessMsg('✅ 交易成功記入帳本！');
     // Scroll to top
     window.scrollTo({ top: 0, behavior: 'smooth' });
+    } finally {
+      setSubmitting(false);
+    }
   };
 
-  const handleBatchConfirm = () => {
-    if (batchTransactions.length === 0) return;
+  const handleBatchConfirm = async () => {
+    if (batchTransactions.length === 0 || submitting) return;
+    setSubmitting(true);
+    try {
 
     const list: Omit<Transaction, 'id' | 'createdAt'>[] = batchTransactions.map(tx => ({
       date: tx.date,
@@ -326,12 +335,15 @@ export default function UploadTab({
       note: tx.note?.trim() || undefined,
     }));
 
-    onBatchAddTransactions(list);
+    await onBatchAddTransactions(list);
     setImageSrc(null);
     setBatchTransactions([]);
     setActiveTab('auto');
     setSuccessMsg(`✅ 成功批次匯入 ${list.length} 筆交易紀錄！`);
     window.scrollTo({ top: 0, behavior: 'smooth' });
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const deleteBatchRow = (idx: number) => {
@@ -595,45 +607,34 @@ export default function UploadTab({
                           <div className="md:col-span-5 grid grid-cols-4 gap-1.5">
                             <div>
                               <label className="text-[10px] font-bold text-gray-400 block mb-1">成交張數</label>
-                              <input
-                                type="number"
-                                step="any"
-                                value={row.shares !== undefined ? row.shares / 1000 : 0}
-                                onChange={(e) => {
-                                  const sheetsVal = parseFloat(e.target.value) || 0;
-                                  const sh = Math.round(sheetsVal * 1000);
+                              <NumberField
+                                value={row.shares || 0}
+                                scale={1000}
+                                allowDecimal
+                                onChange={(v) => {
                                   const pr = row.price || 0;
-                                  // Re-calculate but keep split values safe (e.g. 0 or reset)
-                                  updateBatchRow(idx, { 
-                                    shares: sh, 
-                                    amount: Math.round(sh * pr),
-                                    yunShares: 0,
-                                    broShares: 0
-                                  });
+                                  updateBatchRow(idx, { shares: v, amount: Math.round(v * pr), yunShares: 0, broShares: 0 });
                                 }}
                                 className="w-full bg-white border border-gray-200 rounded-lg px-1 py-1.5 text-sm font-sans font-semibold text-center"
                               />
                             </div>
                             <div>
                               <label className="text-[10px] font-bold text-gray-400 block mb-1">成交單價</label>
-                              <input
-                                type="number"
-                                step="any"
+                              <NumberField
                                 value={row.price || 0}
-                                onChange={(e) => {
-                                  const pr = parseFloat(e.target.value) || 0;
+                                allowDecimal
+                                onChange={(v) => {
                                   const sh = row.shares || 0;
-                                  updateBatchRow(idx, { price: pr, amount: Math.round(sh * pr) });
+                                  updateBatchRow(idx, { price: v, amount: Math.round(sh * v) });
                                 }}
                                 className="w-full bg-white border border-gray-200 rounded-lg px-1 py-1.5 text-sm font-sans font-semibold text-center"
                               />
                             </div>
                             <div>
                               <label className="text-[10px] font-bold text-gray-400 block mb-1">手續費</label>
-                              <input
-                                type="number"
+                              <NumberField
                                 value={row.fee || 0}
-                                onChange={(e) => updateBatchRow(idx, { fee: parseInt(e.target.value) || 0 })}
+                                onChange={(v) => updateBatchRow(idx, { fee: v })}
                                 className="w-full bg-white border border-gray-200 rounded-lg px-1 py-1.5 text-sm font-sans text-center"
                               />
                             </div>
@@ -642,10 +643,9 @@ export default function UploadTab({
                                 {row.type === 'sell' ? '證交稅' : '備註'}
                               </label>
                               {row.type === 'sell' ? (
-                                <input
-                                  type="number"
+                                <NumberField
                                   value={row.tax || 0}
-                                  onChange={(e) => updateBatchRow(idx, { tax: parseInt(e.target.value) || 0 })}
+                                  onChange={(v) => updateBatchRow(idx, { tax: v })}
                                   className="w-full bg-white border border-gray-200 rounded-lg px-1 py-1.5 text-sm font-sans text-center text-red-500"
                                 />
                               ) : (
@@ -663,19 +663,17 @@ export default function UploadTab({
                           <div className="md:col-span-5 grid grid-cols-2 gap-2">
                             <div>
                               <label className="text-[10px] font-bold text-blue-600 block mb-1">實收金額 (Payout)</label>
-                              <input
-                                type="number"
+                              <NumberField
                                 value={row.payout || 0}
-                                onChange={(e) => updateBatchRow(idx, { payout: parseInt(e.target.value) || 0 })}
+                                onChange={(v) => updateBatchRow(idx, { payout: v })}
                                 className="w-full bg-white border border-gray-200 rounded-lg px-2.5 py-1.5 text-sm font-sans font-semibold text-blue-600"
                               />
                             </div>
                             <div>
                               <label className="text-[10px] font-bold text-gray-500 block mb-1">代扣稅額 (Tax)</label>
-                              <input
-                                type="number"
+                              <NumberField
                                 value={row.tax || 0}
-                                onChange={(e) => updateBatchRow(idx, { tax: parseInt(e.target.value) || 0 })}
+                                onChange={(v) => updateBatchRow(idx, { tax: v })}
                                 className="w-full bg-white border border-gray-200 rounded-lg px-2.5 py-1.5 text-sm font-sans font-medium"
                               />
                             </div>
@@ -685,10 +683,9 @@ export default function UploadTab({
                           <div className="md:col-span-5 grid grid-cols-2 gap-2">
                             <div>
                               <label className="text-[10px] font-bold text-purple-600 block mb-1">異動金額 (Amount)</label>
-                              <input
-                                type="number"
+                              <NumberField
                                 value={row.amount || 0}
-                                onChange={(e) => updateBatchRow(idx, { amount: parseInt(e.target.value) || 0 })}
+                                onChange={(v) => updateBatchRow(idx, { amount: v })}
                                 className="w-full bg-white border border-gray-200 rounded-lg px-2.5 py-1.5 text-sm font-sans font-semibold text-purple-600"
                               />
                             </div>
@@ -711,39 +708,37 @@ export default function UploadTab({
                         <div className="mt-4 pt-3 border-t border-gray-200/50 flex flex-wrap items-center justify-between gap-4">
                           {/* Detail controls */}
                           {(row.type === 'buy' || row.type === 'sell') && (
-                            <div className="flex items-center space-x-6 text-[10px] bg-white border border-gray-100 rounded-lg py-1.5 px-3">
+                            <div className="w-full grid grid-cols-2 sm:grid-cols-3 gap-2 items-end">
                               <div>
-                                <span className="font-bold text-blue-700">Yun 張數: </span>
-                                <input
-                                  type="number"
-                                  step="any"
-                                  value={row.yunShares !== undefined ? row.yunShares / 1000 : 0}
-                                  onChange={(e) => {
-                                    const ysSheets = parseFloat(e.target.value) || 0;
-                                    const ys = Math.max(0, Math.round(ysSheets * 1000));
+                                <label className="text-[10px] font-bold text-blue-700 block mb-1">Yun</label>
+                                <NumberField
+                                  value={row.yunShares || 0}
+                                  scale={1000}
+                                  allowDecimal
+                                  onChange={(v) => {
+                                    const ys = Math.max(0, v);
                                     const tot = row.shares || 0;
                                     updateBatchRow(idx, { yunShares: ys, broShares: Math.max(0, tot - ys) });
                                   }}
-                                  className="w-16 border border-gray-200 rounded p-1 font-sans text-center font-semibold focus:outline-none focus:ring-1 focus:ring-blue-500"
-                                /> 張
+                                  className="w-full bg-white border border-gray-200 rounded-lg px-2 py-1.5 text-sm font-sans font-semibold text-center focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                />
                               </div>
                               <div>
-                                <span className="font-bold text-amber-700">哥哥張數: </span>
-                                <input
-                                  type="number"
-                                  step="any"
-                                  value={row.broShares !== undefined ? row.broShares / 1000 : 0}
-                                  onChange={(e) => {
-                                    const bsSheets = parseFloat(e.target.value) || 0;
-                                    const bs = Math.max(0, Math.round(bsSheets * 1000));
+                                <label className="text-[10px] font-bold text-amber-700 block mb-1">哥哥</label>
+                                <NumberField
+                                  value={row.broShares || 0}
+                                  scale={1000}
+                                  allowDecimal
+                                  onChange={(v) => {
+                                    const bs = Math.max(0, v);
                                     const tot = row.shares || 0;
                                     updateBatchRow(idx, { broShares: bs, yunShares: Math.max(0, tot - bs) });
                                   }}
-                                  className="w-16 border border-gray-200 rounded p-1 font-sans text-center font-semibold focus:outline-none focus:ring-1 focus:ring-blue-500"
-                                /> 張
+                                  className="w-full bg-white border border-gray-200 rounded-lg px-2 py-1.5 text-sm font-sans font-semibold text-center focus:outline-none focus:ring-1 focus:ring-amber-500"
+                                />
                               </div>
-                              <div className="text-gray-400">
-                                (合計需為 <span className="font-bold text-gray-600">{(row.shares || 0) / 1000}</span> 張)
+                              <div className="col-span-2 sm:col-span-1 text-[11px] text-gray-400 font-bold pb-2">
+                                共 {(row.shares || 0) / 1000} 張
                               </div>
                             </div>
                           )}
@@ -782,9 +777,11 @@ export default function UploadTab({
                 <button
                   type="button"
                   onClick={handleBatchConfirm}
-                  className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-6 py-2.5 rounded-lg shadow-sm hover:shadow-md transition text-xs flex items-center space-x-1 cursor-pointer"
+                  disabled={submitting}
+                  className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-bold px-6 py-2.5 rounded-lg shadow-sm hover:shadow-md transition text-xs flex items-center space-x-1.5 cursor-pointer"
                 >
-                  <span>批次核對完成，全部確認入帳 ({batchTransactions.length} 筆)</span>
+                  {submitting && <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                  <span>{submitting ? '寫入中…' : `批次核對完成，全部確認入帳 (${batchTransactions.length} 筆)`}</span>
                 </button>
               </div>
             </div>
@@ -873,61 +870,48 @@ export default function UploadTab({
               <div className="grid grid-cols-2 md:grid-cols-4 gap-6 pt-5 pb-2 border-t border-b border-gray-100">
                 <div>
                   <label className="text-sm font-extrabold text-gray-700 block mb-1.5">成交總張數</label>
-                  <input
-                    type="number"
-                    step="any"
-                    value={shares !== undefined ? shares / 1000 : 0}
-                    onChange={(e) => {
-                      const sheetsVal = parseFloat(e.target.value) || 0;
-                      const sh = Math.round(sheetsVal * 1000);
-                      setShares(sh);
-                      setAmount(Math.round(sh * price));
-                    }}
-                    className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm font-sans font-semibold focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                  <NumberField
+                    value={shares}
+                    scale={1000}
+                    allowDecimal
                     required
+                    onChange={(v) => { setShares(v); setAmount(Math.round(v * price)); }}
+                    className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm font-sans font-semibold focus:ring-1 focus:ring-blue-500 focus:outline-none"
                   />
                 </div>
                 <div>
                   <label className="text-sm font-extrabold text-gray-700 block mb-1.5">成交單價 (元)</label>
-                  <input
-                    type="number"
-                    step="0.01"
+                  <NumberField
                     value={price}
-                    onChange={(e) => {
-                      const pr = parseFloat(e.target.value) || 0;
-                      setPrice(pr);
-                      setAmount(Math.round(shares * pr));
-                    }}
-                    className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm font-sans font-semibold focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                    allowDecimal
                     required
+                    onChange={(v) => { setPrice(v); setAmount(Math.round(shares * v)); }}
+                    className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm font-sans font-semibold focus:ring-1 focus:ring-blue-500 focus:outline-none"
                   />
                 </div>
                 <div>
                   <label className="text-sm font-extrabold text-gray-700 block mb-1.5">成交金額 (未含手續費)</label>
-                  <input
-                    type="number"
+                  <NumberField
                     value={amount}
-                    onChange={(e) => setAmount(parseInt(e.target.value) || 0)}
-                    className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm font-sans font-semibold focus:ring-1 focus:ring-blue-500 focus:outline-none"
                     required
+                    onChange={(v) => setAmount(v)}
+                    className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm font-sans font-semibold focus:ring-1 focus:ring-blue-500 focus:outline-none"
                   />
                 </div>
                 <div>
                   <label className="text-sm font-extrabold text-gray-700 block mb-1.5">券商手續費 (元)</label>
-                  <input
-                    type="number"
+                  <NumberField
                     value={fee}
-                    onChange={(e) => setFee(parseInt(e.target.value) || 0)}
+                    onChange={(v) => setFee(v)}
                     className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm font-sans font-semibold focus:ring-1 focus:ring-blue-500 focus:outline-none"
                   />
                 </div>
                 {txType === 'sell' && (
                   <div>
                     <label className="text-sm font-extrabold text-gray-700 block mb-1.5">政府證交稅 (元)</label>
-                    <input
-                      type="number"
+                    <NumberField
                       value={tax}
-                      onChange={(e) => setTax(parseInt(e.target.value) || 0)}
+                      onChange={(v) => setTax(v)}
                       className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm font-sans font-semibold text-red-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
                     />
                   </div>
@@ -940,20 +924,18 @@ export default function UploadTab({
               <div className="grid grid-cols-2 gap-6 pt-5 pb-2 border-t border-b border-gray-100">
                 <div>
                   <label className="text-sm font-extrabold text-gray-700 block mb-1.5">實付股利金額 (入帳現金)</label>
-                  <input
-                    type="number"
+                  <NumberField
                     value={payout}
-                    onChange={(e) => setPayout(parseInt(e.target.value) || 0)}
-                    className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm font-sans font-semibold focus:ring-1 focus:ring-blue-500 focus:outline-none"
                     required
+                    onChange={(v) => setPayout(v)}
+                    className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm font-sans font-semibold focus:ring-1 focus:ring-blue-500 focus:outline-none"
                   />
                 </div>
                 <div>
                   <label className="text-sm font-extrabold text-gray-700 block mb-1.5">代扣稅費 (所得稅/補充保費備查)</label>
-                  <input
-                    type="number"
+                  <NumberField
                     value={tax}
-                    onChange={(e) => setTax(parseInt(e.target.value) || 0)}
+                    onChange={(v) => setTax(v)}
                     className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm font-sans font-semibold focus:ring-1 focus:ring-blue-500 focus:outline-none"
                   />
                 </div>
@@ -965,12 +947,11 @@ export default function UploadTab({
               <div className="grid grid-cols-2 gap-6 pt-5 pb-2 border-t border-b border-gray-100">
                 <div>
                   <label className="text-sm font-extrabold text-gray-700 block mb-1.5">異動現金金額 (元)</label>
-                  <input
-                    type="number"
+                  <NumberField
                     value={amount}
-                    onChange={(e) => setAmount(parseInt(e.target.value) || 0)}
-                    className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm font-sans font-semibold focus:ring-1 focus:ring-blue-500 focus:outline-none"
                     required
+                    onChange={(v) => setAmount(v)}
+                    className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm font-sans font-semibold focus:ring-1 focus:ring-blue-500 focus:outline-none"
                   />
                 </div>
                 <div>
@@ -997,13 +978,12 @@ export default function UploadTab({
                     <div className="grid grid-cols-2 gap-6">
                       <div>
                         <label className="text-sm font-extrabold text-blue-700 block mb-1.5">Yun 分配張數 (張)</label>
-                        <input
-                          type="number"
-                          step="any"
-                          value={yunShares !== undefined ? yunShares / 1000 : 0}
-                          onChange={(e) => {
-                            const ysSheets = parseFloat(e.target.value) || 0;
-                            const ys = Math.max(0, Math.min(shares, Math.round(ysSheets * 1000)));
+                        <NumberField
+                          value={yunShares}
+                          scale={1000}
+                          allowDecimal
+                          onChange={(v) => {
+                            const ys = Math.max(0, Math.min(shares, v));
                             setYunShares(ys);
                             setBroShares(Math.max(0, shares - ys));
                           }}
@@ -1012,13 +992,12 @@ export default function UploadTab({
                       </div>
                       <div>
                         <label className="text-sm font-extrabold text-amber-700 block mb-1.5">哥哥分配張數 (張)</label>
-                        <input
-                          type="number"
-                          step="any"
-                          value={broShares !== undefined ? broShares / 1000 : 0}
-                          onChange={(e) => {
-                            const bsSheets = parseFloat(e.target.value) || 0;
-                            const bs = Math.max(0, Math.min(shares, Math.round(bsSheets * 1000)));
+                        <NumberField
+                          value={broShares}
+                          scale={1000}
+                          allowDecimal
+                          onChange={(v) => {
+                            const bs = Math.max(0, Math.min(shares, v));
                             setBroShares(bs);
                             setYunShares(Math.max(0, shares - bs));
                           }}
@@ -1064,9 +1043,11 @@ export default function UploadTab({
             <div className="pt-4 border-t border-gray-100 flex justify-end">
               <button
                 type="submit"
-                className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-6 py-2.5 rounded-lg shadow-sm hover:shadow-md transition text-xs flex items-center space-x-1 cursor-pointer"
+                disabled={submitting}
+                className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-bold px-6 py-2.5 rounded-lg shadow-sm hover:shadow-md transition text-xs flex items-center space-x-1.5 cursor-pointer"
               >
-                <span>確認交易並記入帳本</span>
+                {submitting && <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                <span>{submitting ? '寫入中…' : '確認交易並記入帳本'}</span>
               </button>
             </div>
           </form>

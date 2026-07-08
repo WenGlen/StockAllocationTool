@@ -17,12 +17,13 @@ import {
 } from 'lucide-react';
 import { Transaction, Settings, TransactionType } from '../types';
 import { calculateLedgerSteps, CalculatedStep } from '../utils/ledger';
+import NumberField from './NumberField';
 
 interface LedgerTabProps {
   transactions: Transaction[];
   settings: Settings;
-  onUpdateTransaction: (id: string, updated: Partial<Transaction>) => void;
-  onDeleteTransaction: (id: string) => void;
+  onUpdateTransaction: (id: string, updated: Partial<Transaction>) => void | Promise<void>;
+  onDeleteTransaction: (id: string) => void | Promise<void>;
 }
 
 export default function LedgerTab({
@@ -50,6 +51,7 @@ export default function LedgerTab({
 
   // Editing state
   const [editingStep, setEditingStep] = useState<CalculatedStep | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   // Form values for editing
   const [editDate, setEditDate] = useState('');
   const [editType, setEditType] = useState<TransactionType>('buy');
@@ -143,11 +145,12 @@ export default function LedgerTab({
     setEditMember(tx.member || 'both');
   };
 
-  const handleEditSubmit = (e: React.FormEvent) => {
+  const handleEditSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingStep) return;
-
-    onUpdateTransaction(editingStep.tx.id, {
+    if (!editingStep || submitting) return;
+    setSubmitting(true);
+    try {
+    await onUpdateTransaction(editingStep.tx.id, {
       date: editDate,
       type: editType,
       symbol: editSymbol.trim() || undefined,
@@ -168,6 +171,9 @@ export default function LedgerTab({
     });
 
     setEditingStep(null);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const handleDeleteClick = (id: string) => {
@@ -517,42 +523,36 @@ export default function LedgerTab({
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 bg-gray-50 p-3 rounded-lg border border-gray-100">
                   <div>
                     <label className="text-gray-500 block mb-1">成交張數</label>
-                    <input
-                      type="number"
-                      step="any"
-                      value={editShares !== undefined ? editShares / 1000 : 0}
-                      onChange={(e) => {
-                        const sheetsVal = parseFloat(e.target.value) || 0;
-                        setEditShares(Math.round(sheetsVal * 1000));
-                      }}
+                    <NumberField
+                      value={editShares}
+                      scale={1000}
+                      allowDecimal
+                      onChange={(v) => setEditShares(v)}
                       className="w-full border border-gray-200 bg-white rounded-lg px-2 py-1.5 font-sans"
                     />
                   </div>
                   <div>
                     <label className="text-gray-500 block mb-1">成交均價</label>
-                    <input
-                      type="number"
-                      step="0.01"
+                    <NumberField
                       value={editPrice}
-                      onChange={(e) => setEditPrice(parseFloat(e.target.value) || 0)}
+                      allowDecimal
+                      onChange={(v) => setEditPrice(v)}
                       className="w-full border border-gray-200 bg-white rounded-lg px-2 py-1.5 font-sans"
                     />
                   </div>
                   <div>
                     <label className="text-gray-500 block mb-1">成交金額</label>
-                    <input
-                      type="number"
+                    <NumberField
                       value={editAmount}
-                      onChange={(e) => setEditAmount(parseInt(e.target.value) || 0)}
+                      onChange={(v) => setEditAmount(v)}
                       className="w-full border border-gray-200 bg-white rounded-lg px-2 py-1.5 font-sans"
                     />
                   </div>
                   <div>
                     <label className="text-gray-500 block mb-1">手續費</label>
-                    <input
-                      type="number"
+                    <NumberField
                       value={editFee}
-                      onChange={(e) => setEditFee(parseInt(e.target.value) || 0)}
+                      onChange={(v) => setEditFee(v)}
                       className="w-full border border-gray-200 bg-white rounded-lg px-2 py-1.5 font-sans"
                     />
                   </div>
@@ -563,19 +563,17 @@ export default function LedgerTab({
                 <div className="grid grid-cols-2 gap-4 bg-gray-50 p-3 rounded-lg border border-gray-100">
                   <div>
                     <label className="text-gray-500 block mb-1">實付股利金額</label>
-                    <input
-                      type="number"
+                    <NumberField
                       value={editPayout}
-                      onChange={(e) => setEditPayout(parseInt(e.target.value) || 0)}
+                      onChange={(v) => setEditPayout(v)}
                       className="w-full border border-gray-200 bg-white rounded-lg px-3 py-2 font-sans font-bold text-amber-600"
                     />
                   </div>
                   <div>
                     <label className="text-gray-500 block mb-1">扣繳稅額</label>
-                    <input
-                      type="number"
+                    <NumberField
                       value={editTax}
-                      onChange={(e) => setEditTax(parseInt(e.target.value) || 0)}
+                      onChange={(v) => setEditTax(v)}
                       className="w-full border border-gray-200 bg-white rounded-lg px-3 py-2 font-sans"
                     />
                   </div>
@@ -601,11 +599,10 @@ export default function LedgerTab({
                     <div className="grid grid-cols-2 gap-4">
                       <div>
                         <label className="text-[10px] text-blue-800 block mb-1">Yun 比例 (%)</label>
-                        <input
-                          type="number"
+                        <NumberField
                           value={editYunRatio}
-                          onChange={(e) => {
-                            const val = Math.max(0, Math.min(100, parseInt(e.target.value) || 0));
+                          onChange={(v) => {
+                            const val = Math.max(0, Math.min(100, v));
                             setEditYunRatio(val);
                             setEditBroRatio(100 - val);
                           }}
@@ -614,11 +611,10 @@ export default function LedgerTab({
                       </div>
                       <div>
                         <label className="text-[10px] text-amber-800 block mb-1">哥哥比例 (%)</label>
-                        <input
-                          type="number"
+                        <NumberField
                           value={editBroRatio}
-                          onChange={(e) => {
-                            const val = Math.max(0, Math.min(100, parseInt(e.target.value) || 0));
+                          onChange={(v) => {
+                            const val = Math.max(0, Math.min(100, v));
                             setEditBroRatio(val);
                             setEditYunRatio(100 - val);
                           }}
@@ -632,13 +628,12 @@ export default function LedgerTab({
                     <div className="grid grid-cols-2 gap-4">
                       <div>
                         <label className="text-[10px] text-blue-800 block mb-1">Yun 張數</label>
-                        <input
-                          type="number"
-                          step="any"
-                          value={editYunShares !== undefined ? editYunShares / 1000 : 0}
-                          onChange={(e) => {
-                            const sheetsVal = parseFloat(e.target.value) || 0;
-                            const val = Math.min(editShares, Math.round(sheetsVal * 1000));
+                        <NumberField
+                          value={editYunShares}
+                          scale={1000}
+                          allowDecimal
+                          onChange={(v) => {
+                            const val = Math.min(editShares, v);
                             setEditYunShares(val);
                             setEditBroShares(Math.max(0, editShares - val));
                           }}
@@ -647,13 +642,12 @@ export default function LedgerTab({
                       </div>
                       <div>
                         <label className="text-[10px] text-amber-800 block mb-1">哥哥張數</label>
-                        <input
-                          type="number"
-                          step="any"
-                          value={editBroShares !== undefined ? editBroShares / 1000 : 0}
-                          onChange={(e) => {
-                            const sheetsVal = parseFloat(e.target.value) || 0;
-                            const val = Math.min(editShares, Math.round(sheetsVal * 1000));
+                        <NumberField
+                          value={editBroShares}
+                          scale={1000}
+                          allowDecimal
+                          onChange={(v) => {
+                            const val = Math.min(editShares, v);
                             setEditBroShares(val);
                             setEditYunShares(Math.max(0, editShares - val));
                           }}
@@ -670,10 +664,9 @@ export default function LedgerTab({
                 <div className="grid grid-cols-2 gap-4 bg-gray-50 p-3 rounded-lg border border-gray-100">
                   <div>
                     <label className="text-gray-500 block mb-1">交易金額</label>
-                    <input
-                      type="number"
+                    <NumberField
                       value={editAmount}
-                      onChange={(e) => setEditAmount(parseInt(e.target.value) || 0)}
+                      onChange={(v) => setEditAmount(v)}
                       className="w-full border border-gray-200 bg-white rounded-lg px-3 py-2 font-sans"
                     />
                   </div>
@@ -713,9 +706,11 @@ export default function LedgerTab({
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold shadow-xs cursor-pointer"
+                  disabled={submitting}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white rounded-lg font-semibold shadow-xs cursor-pointer flex items-center gap-1.5"
                 >
-                  確認儲存
+                  {submitting && <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                  {submitting ? '儲存中…' : '確認儲存'}
                 </button>
               </div>
             </form>

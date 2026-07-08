@@ -18,11 +18,12 @@ import {
   Play
 } from 'lucide-react';
 import { Transaction, LedgerState, Settings, StockHolding, TransactionType } from '../types';
+import NumberField from './NumberField';
 
 interface DashboardTabProps {
   ledgerState: LedgerState;
   settings: Settings;
-  onAddTransaction: (tx: Omit<Transaction, 'id' | 'createdAt'>) => void;
+  onAddTransaction: (tx: Omit<Transaction, 'id' | 'createdAt'>) => void | Promise<void>;
   onRefreshPrices: () => Promise<void>;
   loadingPrices: boolean;
   priceUpdateStatus: string;
@@ -41,6 +42,7 @@ export default function DashboardTab({
   // Modals state
   const [showAdjustModal, setShowAdjustModal] = useState(false);
   const [showInitialModal, setShowInitialModal] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [viewMemberTab, setViewMemberTab] = useState<'all' | 'yun' | 'bro'>('all');
   
   // Form state for Adjust
@@ -121,10 +123,14 @@ export default function DashboardTab({
     setShowAdjustModal(true);
   };
 
-  const handleAdjustSubmit = (e: React.FormEvent) => {
+  const handleAdjustSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submitting) return;
+    if (adjustType === 'stock' && !adjustSymbol.trim()) return alert('請輸入股票代號');
+    setSubmitting(true);
+    try {
     if (adjustType === 'cash') {
-      onAddTransaction({
+      await onAddTransaction({
         date: new Date().toISOString().split('T')[0],
         type: 'adjustment',
         member: adjustMember,
@@ -133,8 +139,7 @@ export default function DashboardTab({
         note: adjustNote || '手動強制修正現金餘額',
       });
     } else {
-      if (!adjustSymbol.trim()) return alert('請輸入股票代號');
-      onAddTransaction({
+      await onAddTransaction({
         date: new Date().toISOString().split('T')[0],
         type: 'adjustment',
         symbol: adjustSymbol.trim(),
@@ -147,20 +152,29 @@ export default function DashboardTab({
       });
     }
     setShowAdjustModal(false);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
-  const handleInitialSubmit = (e: React.FormEvent) => {
+  const handleInitialSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Establish starting balance
-    onAddTransaction({
-      date: new Date().toISOString().split('T')[0],
-      type: 'settlement',
-      member: 'both',
-      yunShares: adjustCashYun, // Yun starting cash
-      broShares: adjustCashBro, // Brother starting cash
-      note: '建立起始現金基準',
-    });
-    setShowInitialModal(false);
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      // Establish starting balance
+      await onAddTransaction({
+        date: new Date().toISOString().split('T')[0],
+        type: 'settlement',
+        member: 'both',
+        yunShares: adjustCashYun, // Yun starting cash
+        broShares: adjustCashBro, // Brother starting cash
+        note: '建立起始現金基準',
+      });
+      setShowInitialModal(false);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -592,12 +606,11 @@ export default function DashboardTab({
                   {(adjustMember === 'yun' || adjustMember === 'both') && (
                     <div>
                       <label className="text-xs font-semibold text-gray-500 block mb-1">Yun 的現金修正後正確餘額 (元)</label>
-                      <input
-                        type="number"
+                      <NumberField
                         value={adjustCashYun}
-                        onChange={(e) => setAdjustCashYun(parseInt(e.target.value) || 0)}
-                        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs focus:ring-1 focus:ring-violet-500 focus:outline-none font-sans"
                         required
+                        onChange={(v) => setAdjustCashYun(v)}
+                        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs focus:ring-1 focus:ring-violet-500 focus:outline-none font-sans"
                       />
                     </div>
                   )}
@@ -605,12 +618,11 @@ export default function DashboardTab({
                   {(adjustMember === 'bro' || adjustMember === 'both') && (
                     <div>
                       <label className="text-xs font-semibold text-gray-500 block mb-1">哥哥的現金修正後正確餘額 (元)</label>
-                      <input
-                        type="number"
+                      <NumberField
                         value={adjustCashBro}
-                        onChange={(e) => setAdjustCashBro(parseInt(e.target.value) || 0)}
-                        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs focus:ring-1 focus:ring-violet-500 focus:outline-none font-sans"
                         required
+                        onChange={(v) => setAdjustCashBro(v)}
+                        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs focus:ring-1 focus:ring-violet-500 focus:outline-none font-sans"
                       />
                     </div>
                   )}
@@ -646,24 +658,20 @@ export default function DashboardTab({
                     <div className="grid grid-cols-2 gap-4">
                       <div>
                         <label className="text-xs font-medium text-gray-400 block mb-1">修正後正確張數</label>
-                        <input
-                          type="number"
-                          step="any"
-                          value={adjustSharesYun !== undefined ? adjustSharesYun / 1000 : 0}
-                          onChange={(e) => {
-                            const sheetsVal = parseFloat(e.target.value) || 0;
-                            setAdjustSharesYun(Math.round(sheetsVal * 1000));
-                          }}
+                        <NumberField
+                          value={adjustSharesYun}
+                          scale={1000}
+                          allowDecimal
+                          onChange={(v) => setAdjustSharesYun(v)}
                           className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs focus:ring-1 focus:ring-violet-500 focus:outline-none font-sans"
                         />
                       </div>
                       <div>
                         <label className="text-xs font-medium text-gray-400 block mb-1">修正後移動均價</label>
-                        <input
-                          type="number"
-                          step="0.01"
+                        <NumberField
                           value={adjustPriceYun}
-                          onChange={(e) => setAdjustPriceYun(parseFloat(e.target.value) || 0)}
+                          allowDecimal
+                          onChange={(v) => setAdjustPriceYun(v)}
                           className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs focus:ring-1 focus:ring-violet-500 focus:outline-none font-sans"
                         />
                       </div>
@@ -675,24 +683,20 @@ export default function DashboardTab({
                     <div className="grid grid-cols-2 gap-4">
                       <div>
                         <label className="text-xs font-medium text-gray-400 block mb-1">修正後正確張數</label>
-                        <input
-                          type="number"
-                          step="any"
-                          value={adjustSharesBro !== undefined ? adjustSharesBro / 1000 : 0}
-                          onChange={(e) => {
-                            const sheetsVal = parseFloat(e.target.value) || 0;
-                            setAdjustSharesBro(Math.round(sheetsVal * 1000));
-                          }}
+                        <NumberField
+                          value={adjustSharesBro}
+                          scale={1000}
+                          allowDecimal
+                          onChange={(v) => setAdjustSharesBro(v)}
                           className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs focus:ring-1 focus:ring-violet-500 focus:outline-none font-sans"
                         />
                       </div>
                       <div>
                         <label className="text-xs font-medium text-gray-400 block mb-1">修正後移動均價</label>
-                        <input
-                          type="number"
-                          step="0.01"
+                        <NumberField
                           value={adjustPriceBro}
-                          onChange={(e) => setAdjustPriceBro(parseFloat(e.target.value) || 0)}
+                          allowDecimal
+                          onChange={(v) => setAdjustPriceBro(v)}
                           className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs focus:ring-1 focus:ring-violet-500 focus:outline-none font-sans"
                         />
                       </div>
@@ -723,9 +727,11 @@ export default function DashboardTab({
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 text-xs bg-violet-600 hover:bg-violet-700 text-white rounded-lg font-medium transition shadow-xs cursor-pointer"
+                  disabled={submitting}
+                  className="px-4 py-2 text-xs bg-violet-600 hover:bg-violet-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white rounded-lg font-medium transition shadow-xs cursor-pointer flex items-center gap-1.5"
                 >
-                  確認修正
+                  {submitting && <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                  {submitting ? '處理中…' : '確認修正'}
                 </button>
               </div>
             </form>
@@ -748,23 +754,21 @@ export default function DashboardTab({
             <form onSubmit={handleInitialSubmit} className="space-y-4">
               <div>
                 <label className="text-xs font-semibold text-gray-500 block mb-1">Yun 的起始現金 (元)</label>
-                <input
-                  type="number"
+                <NumberField
                   value={adjustCashYun}
-                  onChange={(e) => setAdjustCashYun(parseInt(e.target.value) || 0)}
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs focus:ring-1 focus:ring-emerald-500 focus:outline-none font-sans"
                   required
+                  onChange={(v) => setAdjustCashYun(v)}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs focus:ring-1 focus:ring-emerald-500 focus:outline-none font-sans"
                 />
               </div>
               
               <div>
                 <label className="text-xs font-semibold text-gray-500 block mb-1">哥哥的起始現金 (元)</label>
-                <input
-                  type="number"
+                <NumberField
                   value={adjustCashBro}
-                  onChange={(e) => setAdjustCashBro(parseInt(e.target.value) || 0)}
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs focus:ring-1 focus:ring-emerald-500 focus:outline-none font-sans"
                   required
+                  onChange={(v) => setAdjustCashBro(v)}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs focus:ring-1 focus:ring-emerald-500 focus:outline-none font-sans"
                 />
               </div>
 
@@ -778,9 +782,11 @@ export default function DashboardTab({
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 text-xs bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-medium transition shadow-xs cursor-pointer"
+                  disabled={submitting}
+                  className="px-4 py-2 text-xs bg-emerald-600 hover:bg-emerald-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white rounded-lg font-medium transition shadow-xs cursor-pointer flex items-center gap-1.5"
                 >
-                  建立基準點
+                  {submitting && <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                  {submitting ? '處理中…' : '建立基準點'}
                 </button>
               </div>
             </form>
