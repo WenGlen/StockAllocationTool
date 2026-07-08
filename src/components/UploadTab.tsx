@@ -104,7 +104,7 @@ export default function UploadTab({
   const [broRatio, setBroRatio] = useState(settings.broDefaultRatio);
   const [yunShares, setYunShares] = useState(0);
   const [broShares, setBroShares] = useState(0);
-  const [member, setMember] = useState<'yun' | 'bro' | 'both'>('both');
+  const [member, setMember] = useState<'yun' | 'bro'>('yun');
 
   // Multi-transaction batches (對帳單或網銀多筆交易紀錄辨識)
   const [batchTransactions, setBatchTransactions] = useState<DetectedTransaction[]>([]);
@@ -220,7 +220,7 @@ export default function UploadTab({
             broRatio: settings.broDefaultRatio,
             yunShares: 0,
             broShares: 0,
-            member: t.member || 'both'
+            member: (t.member === 'bro' ? 'bro' : 'yun')
           };
         });
       } else if (data.type || data.amount || data.symbol) {
@@ -244,7 +244,7 @@ export default function UploadTab({
           broRatio: settings.broDefaultRatio,
           yunShares: 0,
           broShares: 0,
-          member: data.member || 'both'
+          member: (data.member === 'bro' ? 'bro' : 'yun')
         }];
       }
 
@@ -325,7 +325,7 @@ export default function UploadTab({
       fee: tx.fee && tx.fee > 0 ? tx.fee : undefined,
       tax: tx.tax && tx.tax > 0 ? tx.tax : undefined,
       payout: tx.payout && tx.payout > 0 ? tx.payout : undefined,
-      splitType: ['buy', 'sell', 'dividend'].includes(tx.type) || (['cash_in', 'cash_out'].includes(tx.type) && tx.member === 'both') ? tx.splitType : undefined,
+      splitType: ['buy', 'sell', 'dividend'].includes(tx.type) ? tx.splitType : undefined,
       yunRatio: tx.splitType === 'ratio' || tx.splitType === 'manual' ? tx.yunRatio : undefined,
       broRatio: tx.splitType === 'ratio' || tx.splitType === 'manual' ? tx.broRatio : undefined,
       yunShares: tx.splitType === 'shares' ? tx.yunShares : undefined,
@@ -525,7 +525,7 @@ export default function UploadTab({
                                 updateBatchRow(idx, { 
                                   type: newType,
                                   splitType: defaultSplitType,
-                                  member: newType === 'cash_in' || newType === 'cash_out' ? 'both' : undefined,
+                                  member: newType === 'cash_in' || newType === 'cash_out' ? 'yun' : undefined,
                                   yunShares: 0,
                                   broShares: 0
                                 });
@@ -580,13 +580,12 @@ export default function UploadTab({
                           <div className="md:col-span-3">
                             <label className="text-[10px] font-bold text-gray-500 block mb-1">歸屬成員</label>
                             <select
-                              value={row.member || 'both'}
+                              value={row.member || 'yun'}
                               onChange={(e) => updateBatchRow(idx, { member: e.target.value as any })}
                               className="w-full bg-white border border-gray-200 rounded-lg px-2.5 py-1.5 text-sm font-semibold text-gray-700"
                             >
-                              <option value="both">雙人共有 (依比例拆帳)</option>
-                              <option value="yun">Yun 的個人現金</option>
-                              <option value="bro">哥哥的個人現金</option>
+                              <option value="yun">Yun 的現金</option>
+                              <option value="bro">哥哥的現金</option>
                             </select>
                           </div>
                         ) : (
@@ -703,8 +702,8 @@ export default function UploadTab({
                         )}
                       </div>
 
-                      {/* 5. Split controls (for split-capable items) */}
-                      {(isStockType || (isCashType && row.member === 'both')) && (
+                      {/* 5. Split controls (股票類才需要拆股/拆息) */}
+                      {isStockType && (
                         <div className="mt-4 pt-3 border-t border-gray-200/50 flex flex-wrap items-center justify-between gap-4">
                           {/* Detail controls */}
                           {(row.type === 'buy' || row.type === 'sell') && (
@@ -749,11 +748,6 @@ export default function UploadTab({
                             </div>
                           )}
 
-                          {isCashType && row.member === 'both' && (
-                            <div className="text-[10px] text-gray-500 bg-blue-50/50 text-blue-800 px-3 py-1.5 rounded-lg border border-blue-100/60">
-                              <span>🍃 現金將根據帳簿預設比例 (Yun {row.yunRatio}% / 哥哥 {row.broRatio}%) 進行拆分。</span>
-                            </div>
-                          )}
                         </div>
                       )}
                     </div>
@@ -961,16 +955,15 @@ export default function UploadTab({
                     onChange={(e) => setMember(e.target.value as any)}
                     className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm font-semibold text-gray-700 focus:ring-1 focus:ring-blue-500 focus:outline-none"
                   >
-                    <option value="both">兩人各依分潤比例分攤</option>
-                    <option value="yun">100% 歸屬 Yun</option>
-                    <option value="bro">100% 歸屬 哥哥</option>
+                    <option value="yun">Yun</option>
+                    <option value="bro">哥哥</option>
                   </select>
                 </div>
               </div>
             )}
 
             {/* Split rules section - Completely borderless, just top divider */}
-            {(txType === 'buy' || txType === 'sell' || txType === 'dividend' || ((txType === 'cash_in' || txType === 'cash_out') && member === 'both')) && (
+            {(txType === 'buy' || txType === 'sell' || txType === 'dividend') && (
               <div className="pt-5 border-t border-gray-100 space-y-4">
                 {/* For buy/sell: Directly show specified sheets input fields without headers or toggles */}
                 {(txType === 'buy' || txType === 'sell') && (
@@ -1019,12 +1012,6 @@ export default function UploadTab({
                   </div>
                 )}
 
-                {/* For Cash */}
-                {(txType === 'cash_in' || txType === 'cash_out') && member === 'both' && (
-                  <div className="text-xs text-gray-500 bg-blue-50/50 text-blue-800 px-4 py-3 rounded-lg border border-blue-100/60 leading-relaxed font-bold">
-                    🍃 現金將根據帳簿預設比例 (Yun {yunRatio}% / 哥哥 {broRatio}%) 進行拆分。
-                  </div>
-                )}
               </div>
             )}
 

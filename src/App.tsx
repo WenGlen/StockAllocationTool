@@ -17,7 +17,7 @@ import {
   ArrowRightLeft,
   LogOut
 } from 'lucide-react';
-import { Transaction, Settings, StockAlias, LedgerState } from './types';
+import { Transaction, Settings, LedgerState } from './types';
 import { recalculateLedger } from './utils/ledger';
 import DashboardTab from './components/DashboardTab';
 import UploadTab from './components/UploadTab';
@@ -120,12 +120,6 @@ const INITIAL_TRANSACTIONS: Transaction[] = [
   }
 ];
 
-const INITIAL_ALIASES: StockAlias[] = [
-  { symbol: '0050', aliases: ['元大台灣50', '台灣50', '0050元大台灣50', '元大50'] },
-  { symbol: '2330', aliases: ['台積電', '2330台積電', '台積', 'TSMC'] },
-  { symbol: '2303', aliases: ['聯電', '2303聯電', '二哥'] }
-];
-
 const INITIAL_SETTINGS: Settings = {
   yunDefaultRatio: 50,
   broDefaultRatio: 50
@@ -136,8 +130,8 @@ export default function App() {
 
   // Database states
   const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [settings, setSettings] = useState<Settings>(INITIAL_SETTINGS);
-  const [stockAliases, setStockAliases] = useState<StockAlias[]>(INITIAL_ALIASES);
+  // 拆帳預設比例固定 50/50（無 UI 可改；現金一律歸個人，不再用 both 拆分）
+  const settings: Settings = INITIAL_SETTINGS;
 
   // Prices overlay state (not saved in localStorage to avoid stale cache)
   const [marketPrices, setMarketPrices] = useState<Record<string, { price: number; date: string }>>({});
@@ -150,7 +144,12 @@ export default function App() {
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [googleClientId, setGoogleClientId] = useState<string>('');
 
-  // 從 Google Sheet 載入資料（失敗退回本地快取；401 代表登入過期）
+  // 本地快取（僅交易；雲端載入失敗時的離線後備）
+  const saveState = (txs: Transaction[]) => {
+    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify({ transactions: txs }));
+  };
+
+  // 從 Google Sheet 載入交易（失敗退回本地快取；401 代表登入過期）
   const loadData = async () => {
     try {
       const res = await fetch('/api/transactions');
@@ -158,9 +157,7 @@ export default function App() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const db = await res.json();
       setTransactions(db.transactions || []);
-      if (db.settings) setSettings(db.settings);
-      if (db.stockAliases && db.stockAliases.length) setStockAliases(db.stockAliases);
-      saveState(db.transactions || [], db.settings || INITIAL_SETTINGS, db.stockAliases || INITIAL_ALIASES);
+      saveState(db.transactions || []);
     } catch (e) {
       console.warn('雲端載入失敗，改用本地快取', e);
       const cached = localStorage.getItem(LOCAL_STORAGE_KEY);
@@ -168,8 +165,6 @@ export default function App() {
         try {
           const parsed = JSON.parse(cached);
           if (parsed.transactions) setTransactions(parsed.transactions);
-          if (parsed.settings) setSettings(parsed.settings);
-          if (parsed.stockAliases) setStockAliases(parsed.stockAliases);
         } catch {
           /* 快取毀損則維持空狀態 */
         }
@@ -210,31 +205,6 @@ export default function App() {
     setTransactions([]);
     setMarketPrices({});
     didAutoRefreshPrices.current = false;
-  };
-
-  // 2. Persist state to local storage when database changes
-  const saveState = (txs: Transaction[], setts: Settings, aliases: StockAlias[]) => {
-    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify({
-      transactions: txs,
-      settings: setts,
-      stockAliases: aliases
-    }));
-  };
-
-  const resetToDemoData = () => {
-    setTransactions(INITIAL_TRANSACTIONS);
-    setSettings(INITIAL_SETTINGS);
-    setStockAliases(INITIAL_ALIASES);
-    saveState(INITIAL_TRANSACTIONS, INITIAL_SETTINGS, INITIAL_ALIASES);
-    setMarketPrices({});
-  };
-
-  const clearAllData = () => {
-    if (confirm('確定要清空整本記帳冊嗎？此動作將刪除所有交易。')) {
-      setTransactions([]);
-      setMarketPrices({});
-      saveState([], settings, stockAliases);
-    }
   };
 
   // 3. Recalculate Ledger dynamically based on sorted ledger
@@ -321,9 +291,7 @@ export default function App() {
       if (!res.ok) return;
       const db = await res.json();
       setTransactions(db.transactions || []);
-      if (db.settings) setSettings(db.settings);
-      if (db.stockAliases && db.stockAliases.length) setStockAliases(db.stockAliases);
-      saveState(db.transactions || [], db.settings || settings, db.stockAliases || stockAliases);
+      saveState(db.transactions || []);
     } catch (e) {
       console.warn('重新同步失敗', e);
     }
@@ -343,7 +311,7 @@ export default function App() {
     };
     const nextTxs = [...transactions, fullTx];
     setTransactions(nextTxs);
-    saveState(nextTxs, settings, stockAliases);
+    saveState(nextTxs);
     try {
       const res = await fetch('/api/transactions', {
         method: 'POST',
@@ -368,7 +336,7 @@ export default function App() {
     }));
     const nextTxs = [...transactions, ...fullTxs];
     setTransactions(nextTxs);
-    saveState(nextTxs, settings, stockAliases);
+    saveState(nextTxs);
     try {
       const res = await fetch('/api/transactions', {
         method: 'POST',
@@ -391,7 +359,7 @@ export default function App() {
     const merged = { ...existing, ...updatedFields };
     const nextTxs = transactions.map(t => t.id === id ? merged : t);
     setTransactions(nextTxs);
-    saveState(nextTxs, settings, stockAliases);
+    saveState(nextTxs);
     try {
       const res = await fetch('/api/transactions', {
         method: 'PATCH',
@@ -411,7 +379,7 @@ export default function App() {
   const handleDeleteTransaction = async (id: string) => {
     const nextTxs = transactions.filter(t => t.id !== id);
     setTransactions(nextTxs);
-    saveState(nextTxs, settings, stockAliases);
+    saveState(nextTxs);
     try {
       const res = await fetch(`/api/transactions?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
       if (!res.ok) {

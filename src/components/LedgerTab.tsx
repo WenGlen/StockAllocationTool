@@ -677,7 +677,9 @@ export default function LedgerTab({
                       onChange={(e) => setEditMember(e.target.value as any)}
                       className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2"
                     >
-                      <option value="both">兩人各依分潤比例</option>
+                      {(editType === 'settlement' || editType === 'adjustment') && (
+                        <option value="both">兩人各自設定</option>
+                      )}
                       <option value="yun">100% 歸屬 Yun</option>
                       <option value="bro">100% 歸屬 哥哥</option>
                     </select>

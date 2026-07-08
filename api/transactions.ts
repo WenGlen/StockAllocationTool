@@ -101,37 +101,19 @@ function txToRow(tx: Record<string, any>): any[] {
   });
 }
 
-/** 讀取整個資料庫：transactions / settings / stockAliases */
+/** 讀取交易資料（僅 Transactions 分頁；拆帳比例預設固定 50/50，寫在前端常數） */
 async function readDb() {
   const sheets = getSheetsClient();
-  const spreadsheetId = SHEET_ID();
-  const resp = await sheets.spreadsheets.values.batchGet({
-    spreadsheetId,
-    ranges: [`${TX_TAB}!A2:${LAST_COL}`, 'Settings!A2:B', 'StockAliases!A2:B'],
+  const resp = await sheets.spreadsheets.values.get({
+    spreadsheetId: SHEET_ID(),
+    range: `${TX_TAB}!A2:${LAST_COL}`,
   });
-  const [txRange, setRange, aliasRange] = resp.data.valueRanges || [];
 
-  const transactions = (txRange?.values || [])
+  const transactions = (resp.data.values || [])
     .map(rowToTx)
     .filter((t): t is Record<string, any> => !!t);
 
-  const settings: Record<string, number> = { yunDefaultRatio: 50, broDefaultRatio: 50 };
-  (setRange?.values || []).forEach((r) => {
-    const [k, v] = r;
-    if (k && v !== undefined && v !== '') {
-      const num = Number(v);
-      if (!isNaN(num)) settings[String(k).trim()] = num;
-    }
-  });
-
-  const stockAliases = (aliasRange?.values || [])
-    .filter((r) => r[0])
-    .map((r) => ({
-      symbol: String(r[0]).trim(),
-      aliases: String(r[1] || '').split(',').map((a) => a.trim()).filter(Boolean),
-    }));
-
-  return { transactions, settings, stockAliases };
+  return { transactions };
 }
 
 /** 新增交易（可單筆或多筆） */
