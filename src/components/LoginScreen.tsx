@@ -79,7 +79,7 @@ export default function LoginScreen({ clientId, onSuccess }: LoginScreenProps) {
         <div className="inline-flex p-3 bg-blue-600 rounded-2xl mb-4">
           <ArrowRightLeft className="w-6 h-6 text-white" />
         </div>
-        <h1 className="text-xl font-black text-gray-900 tracking-tight">股票分帳對帳工具</h1>
+        <h1 className="text-xl font-black text-gray-900 tracking-tight">YUN股票分帳</h1>
         <p className="text-sm text-gray-400 font-bold mt-1 mb-6">請用授權的 Google 帳號登入</p>
         <div className="flex justify-center" ref={btnRef} />
         {loading && <p className="text-xs text-gray-400 mt-4">登入中…</p>}

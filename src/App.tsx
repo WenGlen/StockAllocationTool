@@ -414,7 +414,7 @@ export default function App() {
             <div className="p-2 bg-blue-600 rounded-xl shadow-xs">
               <ArrowRightLeft className="w-5 h-5 text-white" />
             </div>
-            <h1 className="text-lg sm:text-xl font-black tracking-tight">股票分帳對帳工具</h1>
+            <h1 className="text-lg sm:text-xl font-black tracking-tight">YUN股票分帳</h1>
           </div>
 
           {/* Navigation tabs - aligned to title height */}
